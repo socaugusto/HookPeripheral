@@ -49,6 +49,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define RUN_STATUS_LED DK_LED1
 #define RUN_LED_BLINK_INTERVAL 1000
+#define SAFETY_LINE DK_LED4
 
 #define CON_STATUS_LED DK_LED2
 
@@ -379,6 +380,8 @@ static int uart_init(void)
 	return err;
 }
 
+const uint8_t remoteAddress[] = {0x07, 0x3C, 0x17, 0x8D, 0x9A, 0xC2};
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -396,6 +399,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	dk_set_led_on(CON_STATUS_LED);
 	k_sem_give(&rssi_sem);
+
+	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
+	{
+		dk_set_led(SAFETY_LINE, 0);
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -417,6 +425,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		bt_conn_unref(current_conn);
 		current_conn = NULL;
 		dk_set_led_off(CON_STATUS_LED);
+	}
+
+	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
+	{
+		dk_set_led(SAFETY_LINE, 1);
 	}
 }
 
@@ -694,6 +707,9 @@ int main(void)
 		LOG_ERR("Advertising failed to start (err %d)", err);
 		return 0;
 	}
+
+	// Safety tripped
+	dk_set_led(SAFETY_LINE, 1);
 
 	for (;;)
 	{
