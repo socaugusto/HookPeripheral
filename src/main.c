@@ -60,6 +60,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define UART_WAIT_FOR_RX CONFIG_BT_NUS_UART_RX_WAIT_TIME
 
 static K_SEM_DEFINE(ble_init_ok, 0, 1);
+static K_SEM_DEFINE(rssi_sem, 0, 1);
 
 static struct bt_conn *current_conn;
 static struct bt_conn *auth_conn;
@@ -394,6 +395,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	current_conn = bt_conn_ref(conn);
 
 	dk_set_led_on(CON_STATUS_LED);
+	k_sem_give(&rssi_sem);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -732,37 +734,44 @@ void ble_rssi_thread(void)
 	sdc_hci_cmd_sp_read_rssi_t p_param = {conn_handle};
 	bool antenna = 0;
 
-	for (;;)
+	while (1)
 	{
+		k_sem_take(&rssi_sem, K_FOREVER);
+		k_sleep(K_MSEC(2000));
 
-		gpio_pin_set_dt(&antenna_sel, 0);
-		k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
-		sdc_hci_cmd_sp_read_rssi_return_t p_return1 = {conn_handle, 0};
-		uint8_t err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return1);
-		gpio_pin_set_dt(&antenna_sel, 1);
-		k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
-		sdc_hci_cmd_sp_read_rssi_return_t p_return2 = {conn_handle, 0};
-		err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return2);
-		if (err)
+		for (;;)
 		{
-			LOG_WRN("Error %d Reading RSSI", err);
-		}
 
-		if (p_return1.rssi > p_return2.rssi)
-		{
 			gpio_pin_set_dt(&antenna_sel, 0);
-			if (antenna)
+			k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
+			sdc_hci_cmd_sp_read_rssi_return_t p_return1 = {conn_handle, 0};
+			uint8_t err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return1);
+			gpio_pin_set_dt(&antenna_sel, 1);
+			k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
+			sdc_hci_cmd_sp_read_rssi_return_t p_return2 = {conn_handle, 0};
+			err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return2);
+			if (err)
 			{
-				antenna = 0;
-				LOG_INF("Using antenna 1, RSSI %d", p_return1.rssi);
+				LOG_WRN("Error %d Reading RSSI", err);
+				break;
 			}
+
+			if (p_return1.rssi > p_return2.rssi)
+			{
+				gpio_pin_set_dt(&antenna_sel, 0);
+				if (antenna)
+				{
+					antenna = 0;
+					LOG_INF("Using antenna 1, RSSI %d", p_return1.rssi);
+				}
+			}
+			else if (!antenna)
+			{
+				antenna = 1;
+				LOG_INF("Using antenna 2, RSSI %d", p_return2.rssi);
+			}
+			k_sleep(K_MSEC(ANTENNA_COMMUNICATION_INTERVAL));
 		}
-		else if (!antenna)
-		{
-			antenna = 1;
-			LOG_INF("Using antenna 2, RSSI %d", p_return2.rssi);
-		}
-		k_sleep(K_MSEC(ANTENNA_COMMUNICATION_INTERVAL));
 	}
 }
 K_THREAD_DEFINE(ble_rssi_thread_id, STACKSIZE, ble_rssi_thread, NULL, NULL,
