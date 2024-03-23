@@ -380,6 +380,21 @@ static int uart_init(void)
 	return err;
 }
 
+static void update_phy(struct bt_conn *conn)
+{
+	int err;
+	const struct bt_conn_le_phy_param preferred_phy = {
+		.options = BT_CONN_LE_PHY_OPT_NONE, // BT_CONN_LE_PHY_OPT_CODED_S8
+		.pref_rx_phy = BT_GAP_LE_PHY_2M,	// BT_GAP_LE_PHY_CODED,
+		.pref_tx_phy = BT_GAP_LE_PHY_2M,	// BT_GAP_LE_PHY_CODED,
+	};
+	err = bt_conn_le_phy_update(conn, &preferred_phy);
+	if (err)
+	{
+		LOG_ERR("bt_conn_le_phy_update() returned %d", err);
+	}
+}
+
 const uint8_t remoteAddress[] = {0x07, 0x3C, 0x17, 0x8D, 0x9A, 0xC2};
 
 static void connected(struct bt_conn *conn, uint8_t err)
@@ -404,6 +419,20 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	{
 		dk_set_led(SAFETY_LINE, 0);
 	}
+
+	struct bt_conn_info info;
+	err = bt_conn_get_info(conn, &info);
+	if (err)
+	{
+		LOG_ERR("bt_conn_get_info() returned %d", err);
+		return;
+	}
+
+	double connection_interval = info.le.interval * 1.25; // in ms
+	uint16_t supervision_timeout = info.le.timeout * 10;  // in ms
+	LOG_INF("Connection parameters: interval %.2f ms, latency %d intervals, timeout %d ms", connection_interval, info.le.latency, supervision_timeout);
+
+	update_phy(current_conn);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -453,9 +482,35 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 }
 #endif
 
+void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
+{
+	// PHY Updated
+	if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_1M)
+	{
+		LOG_INF("PHY updated. New PHY: 1M");
+	}
+	else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_2M)
+	{
+		LOG_INF("PHY updated. New PHY: 2M");
+	}
+	else if (param->tx_phy == BT_CONN_LE_TX_POWER_PHY_CODED_S8)
+	{
+		LOG_INF("PHY updated. New PHY: Long Range");
+	}
+}
+
+void on_le_param_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency, uint16_t timeout)
+{
+	double connection_interval = interval * 1.25; // in ms
+	uint16_t supervision_timeout = timeout * 10;  // in ms
+	LOG_INF("Connection parameters updated: interval %.2f ms, latency %d intervals, timeout %d ms", connection_interval, latency, supervision_timeout);
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.le_param_updated = on_le_param_updated,
+	.le_phy_updated = on_le_phy_updated,
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
 	.security_changed = security_changed,
 #endif
