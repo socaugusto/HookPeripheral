@@ -75,17 +75,16 @@ struct uart_data_t
 	uint8_t data[UART_BUF_SIZE];
 	uint16_t len;
 };
-
+static void start_advertising_coded(struct k_work *work);
 static K_FIFO_DEFINE(fifo_uart_tx_data);
 static K_FIFO_DEFINE(fifo_uart_rx_data);
+static K_WORK_DEFINE(start_advertising_worker, start_advertising_coded);
+static struct bt_le_ext_adv *adv;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-};
-
-static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
 #if CONFIG_BT_NUS_UART_ASYNC_ADAPTER
@@ -384,9 +383,9 @@ static void update_phy(struct bt_conn *conn)
 {
 	int err;
 	const struct bt_conn_le_phy_param preferred_phy = {
-		.options = BT_CONN_LE_PHY_OPT_NONE, // BT_CONN_LE_PHY_OPT_CODED_S8
-		.pref_rx_phy = BT_GAP_LE_PHY_2M,	// BT_GAP_LE_PHY_CODED,
-		.pref_tx_phy = BT_GAP_LE_PHY_2M,	// BT_GAP_LE_PHY_CODED,
+		.options = BT_CONN_LE_PHY_OPT_CODED_S8, // BT_CONN_LE_PHY_OPT_CODED_S8
+		.pref_rx_phy = BT_GAP_LE_PHY_CODED,		// BT_GAP_LE_PHY_CODED,
+		.pref_tx_phy = BT_GAP_LE_PHY_CODED,		// BT_GAP_LE_PHY_CODED,
 	};
 	err = bt_conn_le_phy_update(conn, &preferred_phy);
 	if (err)
@@ -399,40 +398,49 @@ const uint8_t remoteAddress[] = {0x07, 0x3C, 0x17, 0x8D, 0x9A, 0xC2};
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	struct bt_conn_info info;
 	char addr[BT_ADDR_LE_STR_LEN];
 
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 	if (err)
 	{
 		LOG_ERR("Connection failed (err %u)", err);
 		return;
 	}
-
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	LOG_INF("Connected %s", addr);
-
-	current_conn = bt_conn_ref(conn);
-
-	dk_set_led_on(CON_STATUS_LED);
-	k_sem_give(&rssi_sem);
-
-	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
+	else
 	{
-		dk_set_led(SAFETY_LINE, 0);
+		LOG_INF("Connected %s", addr);
 	}
 
-	struct bt_conn_info info;
 	err = bt_conn_get_info(conn, &info);
 	if (err)
 	{
 		LOG_ERR("bt_conn_get_info() returned %d", err);
 		return;
 	}
+	else
+	{
+		double connection_interval = info.le.interval * 1.25; // in ms
+		uint16_t supervision_timeout = info.le.timeout * 10;  // in ms
+		LOG_INF("Connection parameters: interval %.2f ms, latency %d intervals, timeout %d ms", connection_interval, info.le.latency, supervision_timeout);
 
-	double connection_interval = info.le.interval * 1.25; // in ms
-	uint16_t supervision_timeout = info.le.timeout * 10;  // in ms
-	LOG_INF("Connection parameters: interval %.2f ms, latency %d intervals, timeout %d ms", connection_interval, info.le.latency, supervision_timeout);
+		const struct bt_conn_le_phy_info *phy_info;
+		phy_info = info.le.phy;
 
+		LOG_INF("Connected: %s, tx_phy %u, rx_phy %u",
+				addr, phy_info->tx_phy, phy_info->rx_phy);
+	}
+
+	dk_set_led_on(CON_STATUS_LED);
+	current_conn = bt_conn_ref(conn);
 	update_phy(current_conn);
+
+	k_sem_give(&rssi_sem);
+
+	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
+	{
+		dk_set_led(SAFETY_LINE, 0);
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -460,6 +468,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	{
 		dk_set_led(SAFETY_LINE, 1);
 	}
+
+	k_work_submit(&start_advertising_worker);
 }
 
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
@@ -515,6 +525,50 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.security_changed = security_changed,
 #endif
 };
+
+static int create_advertising_coded(void)
+{
+	int err;
+	struct bt_le_adv_param param =
+		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE |
+								 BT_LE_ADV_OPT_EXT_ADV |
+								 BT_LE_ADV_OPT_CODED,
+							 BT_GAP_ADV_FAST_INT_MIN_2,
+							 BT_GAP_ADV_FAST_INT_MAX_2,
+							 NULL);
+
+	err = bt_le_ext_adv_create(&param, NULL, &adv);
+	if (err)
+	{
+		printk("Failed to create advertiser set (err %d)\n", err);
+		return err;
+	}
+
+	printk("Created adv: %p\n", adv);
+
+	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err)
+	{
+		printk("Failed to set advertising data (err %d)\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static void start_advertising_coded(struct k_work *work)
+{
+	int err;
+
+	err = bt_le_ext_adv_start(adv, NULL);
+	if (err)
+	{
+		printk("Failed to start advertising set (err %d)\n", err);
+		return;
+	}
+
+	printk("Advertiser %p set started\n", adv);
+}
 
 #if defined(CONFIG_BT_NUS_SECURITY_ENABLED)
 static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
@@ -741,8 +795,6 @@ int main(void)
 
 	LOG_INF("Bluetooth initialized");
 
-	k_sem_give(&ble_init_ok);
-
 	if (IS_ENABLED(CONFIG_SETTINGS))
 	{
 		settings_load();
@@ -755,13 +807,16 @@ int main(void)
 		return 0;
 	}
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd,
-						  ARRAY_SIZE(sd));
+	err = create_advertising_coded();
 	if (err)
 	{
-		LOG_ERR("Advertising failed to start (err %d)", err);
+		printk("Advertising failed to create (err %d)\n", err);
 		return 0;
 	}
+
+	k_sem_give(&ble_init_ok);
+
+	k_work_submit(&start_advertising_worker);
 
 	// Safety tripped
 	dk_set_led(SAFETY_LINE, 1);
