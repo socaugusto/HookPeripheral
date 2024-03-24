@@ -441,6 +441,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	{
 		dk_set_led(SAFETY_LINE, 0);
 	}
+
+	k_work_submit(&start_advertising_worker);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
