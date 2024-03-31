@@ -50,8 +50,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define RUN_STATUS_LED DK_LED1
 #define RUN_LED_BLINK_INTERVAL 1000
 #define SAFETY_LINE DK_LED4
-
-#define CON_STATUS_LED DK_LED2
+#define RESET_LINE DK_LED2
 
 #define KEY_PASSKEY_ACCEPT DK_BTN1_MSK
 #define KEY_PASSKEY_REJECT DK_BTN2_MSK
@@ -431,7 +430,6 @@ static void connected(struct bt_conn *conn, uint8_t err)
 				addr, phy_info->tx_phy, phy_info->rx_phy);
 	}
 
-	dk_set_led_on(CON_STATUS_LED);
 	current_conn = bt_conn_ref(conn);
 	update_phy(current_conn);
 
@@ -463,7 +461,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	{
 		bt_conn_unref(current_conn);
 		current_conn = NULL;
-		dk_set_led_off(CON_STATUS_LED);
 	}
 
 	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
