@@ -807,13 +807,13 @@ const uint16_t ANTENNA_COMMUNICATION_INTERVAL = (CONFIG_BT_PERIPHERAL_PREF_TIMEO
 void ble_rssi_thread(void)
 {
 	uint16_t conn_handle = 0;
-	bt_hci_get_conn_handle(current_conn, &conn_handle);
-	sdc_hci_cmd_sp_read_rssi_t p_param = {conn_handle};
 	bool antenna = 0;
 
 	while (1)
 	{
 		k_sem_take(&rssi_sem, K_FOREVER);
+		bt_hci_get_conn_handle(current_conn, &conn_handle);
+		sdc_hci_cmd_sp_read_rssi_t p_param = {conn_handle};
 		k_sleep(K_MSEC(2000));
 
 		for (;;)
