@@ -807,47 +807,61 @@ const uint16_t ANTENNA_COMMUNICATION_INTERVAL = (CONFIG_BT_PERIPHERAL_PREF_TIMEO
 void ble_rssi_thread(void)
 {
 	uint16_t conn_handle = 0;
-	bool antenna = 0;
 
 	while (1)
 	{
 		k_sem_take(&rssi_sem, K_FOREVER);
+		k_sleep(K_MSEC(2000));
 		bt_hci_get_conn_handle(current_conn, &conn_handle);
 		sdc_hci_cmd_sp_read_rssi_t p_param = {conn_handle};
-		k_sleep(K_MSEC(2000));
 
 		for (;;)
 		{
 
-			gpio_pin_set_dt(&antenna_sel, 0);
-			k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
-			sdc_hci_cmd_sp_read_rssi_return_t p_return1 = {conn_handle, 0};
-			uint8_t err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return1);
-			gpio_pin_set_dt(&antenna_sel, 1);
-			k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
-			sdc_hci_cmd_sp_read_rssi_return_t p_return2 = {conn_handle, 0};
-			err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return2);
+			// gpio_pin_set_dt(&antenna_sel, 0);
+			// k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
+			// sdc_hci_cmd_sp_read_rssi_return_t p_return1 = {conn_handle, 0};
+			// uint8_t err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return1);
+			// gpio_pin_set_dt(&antenna_sel, 1);
+			// k_sleep(K_MSEC(ANTENNA_TOGGLING_INTERVAL));
+			// sdc_hci_cmd_sp_read_rssi_return_t p_return2 = {conn_handle, 0};
+			// err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return2);
+			// if (err)
+			// {
+			// 	LOG_WRN("Error %d Reading RSSI", err);
+			// 	break;
+			// }
+
+			// if (p_return1.rssi > p_return2.rssi)
+			// {
+			// 	gpio_pin_set_dt(&antenna_sel, 0);
+			// 	if (antenna)
+			// 	{
+			// 		antenna = 0;
+			// 		LOG_INF("Using antenna 1, RSSI %d", p_return1.rssi);
+			// 	}
+			// }
+			// else if (!antenna)
+			// {
+			// 	antenna = 1;
+			// 	LOG_INF("Using antenna 2, RSSI %d", p_return2.rssi);
+			// }
+			// k_sleep(K_MSEC(ANTENNA_COMMUNICATION_INTERVAL));
+
+			sdc_hci_cmd_sp_read_rssi_return_t p_return = {conn_handle, 0};
+			uint8_t err = sdc_hci_cmd_sp_read_rssi(&p_param, &p_return);
 			if (err)
 			{
 				LOG_WRN("Error %d Reading RSSI", err);
 				break;
 			}
+			else
+			{
+				LOG_INF("RSSI %d", p_return.rssi);
+			}
 
-			if (p_return1.rssi > p_return2.rssi)
-			{
-				gpio_pin_set_dt(&antenna_sel, 0);
-				if (antenna)
-				{
-					antenna = 0;
-					LOG_INF("Using antenna 1, RSSI %d", p_return1.rssi);
-				}
-			}
-			else if (!antenna)
-			{
-				antenna = 1;
-				LOG_INF("Using antenna 2, RSSI %d", p_return2.rssi);
-			}
-			k_sleep(K_MSEC(ANTENNA_COMMUNICATION_INTERVAL));
+			k_sleep(K_MSEC(1000));
+
 		}
 	}
 }
