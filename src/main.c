@@ -51,6 +51,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define RUN_LED_BLINK_INTERVAL 1000
 #define SAFETY_LINE DK_LED4
 #define RESET_LINE DK_LED2
+#define POWER_STEVAL 4
 
 #define KEY_PASSKEY_ACCEPT DK_BTN1_MSK
 #define KEY_PASSKEY_REJECT DK_BTN2_MSK
@@ -75,9 +76,11 @@ struct uart_data_t
 	uint16_t len;
 };
 static void start_advertising_coded(struct k_work *work);
+static void shutdown_steval_power(struct k_work *work);
 static K_FIFO_DEFINE(fifo_uart_tx_data);
 static K_FIFO_DEFINE(fifo_uart_rx_data);
 static K_WORK_DEFINE(start_advertising_worker, start_advertising_coded);
+static K_WORK_DEFINE(shutdown_steval_worker, shutdown_steval_power);
 static struct bt_le_ext_adv *adv;
 
 static const struct bt_data ad[] = {
@@ -401,6 +404,7 @@ const uint8_t remoteAddress[] = {0x07, 0x3C, 0x17, 0x8D, 0x9A, 0xC2};
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	dk_set_led_on(POWER_STEVAL);
 	struct bt_conn_info info;
 	char addr[BT_ADDR_LE_STR_LEN];
 
@@ -473,6 +477,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 
 	k_work_submit(&start_advertising_worker);
+	k_work_submit(&shutdown_steval_worker);
 }
 
 #ifdef CONFIG_BT_NUS_SECURITY_ENABLED
@@ -564,6 +569,20 @@ static void start_advertising_coded(struct k_work *work)
 		return;
 	}
 	printk("Advertiser %p set started\n", adv);
+}
+
+static void shutdown_steval_power(struct k_work *work)
+{
+	k_sleep(K_SECONDS(300));
+	if (current_conn == NULL)
+	{
+		dk_set_led_off(POWER_STEVAL);
+		LOG_INF("Shutting down STeval");
+	}
+	else
+	{
+		LOG_INF("Skip STeval shutdown");
+	}
 }
 
 #if defined(CONFIG_BT_NUS_SECURITY_ENABLED)
