@@ -75,22 +75,19 @@ struct uart_data_t
 	uint8_t data[UART_BUF_SIZE];
 	uint16_t len;
 };
-static void start_advertising_coded(struct k_work *work);
+static void start_advertising(struct k_work *work);
 static void shutdown_steval_power(struct k_work *work);
 static K_FIFO_DEFINE(fifo_uart_tx_data);
 static K_FIFO_DEFINE(fifo_uart_rx_data);
-static K_WORK_DEFINE(start_advertising_worker, start_advertising_coded);
+static K_WORK_DEFINE(start_advertising_worker, start_advertising);
 static K_WORK_DEFINE(shutdown_steval_worker, shutdown_steval_power);
-static struct bt_le_ext_adv *adv;
+static struct bt_le_ext_adv *advCoded;
+static struct bt_le_ext_adv *adv1Mb;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-};
-
-static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
 
 #if CONFIG_BT_NUS_UART_ASYNC_ADAPTER
@@ -438,6 +435,19 @@ static void connected(struct bt_conn *conn, uint8_t err)
 				addr, phy_info->tx_phy, phy_info->rx_phy);
 	}
 
+	err = bt_le_ext_adv_stop(advCoded);
+	if (err)
+	{
+		LOG_ERR("Failed to stop Coded with error %d", err);
+		return;
+	}
+	err = bt_le_ext_adv_stop(adv1Mb);
+	if (err)
+	{
+		LOG_ERR("Failed to stop Standard with error %d", err);
+		return;
+	}
+
 	current_conn = bt_conn_ref(conn);
 	update_phy(current_conn);
 
@@ -447,8 +457,6 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	{
 		dk_set_led(SAFETY_LINE, 0);
 	}
-
-	//k_work_submit(&start_advertising_worker);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -544,14 +552,14 @@ static int create_advertising_coded(void)
 							 BT_GAP_ADV_FAST_INT_MIN_2,
 							 BT_GAP_ADV_FAST_INT_MAX_2,
 							 NULL);
-	err = bt_le_ext_adv_create(&param, NULL, &adv);
+	err = bt_le_ext_adv_create(&param, NULL, &advCoded);
 	if (err)
 	{
 		printk("Failed to create advertiser set (err %d)\n", err);
 		return err;
 	}
-	printk("Created adv: %p\n", adv);
-	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	printk("Created adv: %p\n", advCoded);
+	err = bt_le_ext_adv_set_data(advCoded, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err)
 	{
 		printk("Failed to set advertising data (err %d)\n", err);
@@ -559,29 +567,69 @@ static int create_advertising_coded(void)
 	}
 	return 0;
 }
-static void start_advertising_coded(struct k_work *work)
+
+static int create_advertising_standard(void)
 {
 	int err;
-	err = bt_le_ext_adv_start(adv, NULL);
+
+	struct bt_le_adv_param param =
+		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE |
+								 BT_LE_ADV_OPT_EXT_ADV,
+							 BT_GAP_ADV_FAST_INT_MIN_2,
+							 BT_GAP_ADV_FAST_INT_MAX_2,
+							 NULL);
+	err = bt_le_ext_adv_create(&param, NULL, &adv1Mb);
+	if (err)
+	{
+		printk("Failed to create advertiser set (err %d)\n", err);
+		return err;
+	}
+	printk("Created adv: %p\n", adv1Mb);
+	err = bt_le_ext_adv_set_data(adv1Mb, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err)
+	{
+		printk("Failed to set advertising data (err %d)\n", err);
+		return err;
+	}
+	return 0;
+}
+
+static void start_advertising(struct k_work *work)
+{
+	int err;
+	err = bt_le_ext_adv_start(advCoded, NULL);
 	if (err)
 	{
 		printk("Failed to start advertising set (err %d)\n", err);
 		return;
 	}
-	printk("Advertiser %p set started\n", adv);
+	printk("Advertiser Coded %p set started\n", advCoded);
+
+	err = bt_le_ext_adv_start(adv1Mb, NULL);
+	if (err)
+	{
+		printk("Failed to start advertising set (err %d)\n", err);
+		return;
+	}
+	printk("Advertiser 1M/2M %p set started\n", adv1Mb);
 }
 
 static void shutdown_steval_power(struct k_work *work)
 {
-	k_sleep(K_SECONDS(300));
-	if (current_conn == NULL)
+	int32_t timeout = 60;
+	for (int32_t i = timeout; i > -1; --i)
 	{
-		dk_set_led_off(POWER_STEVAL);
-		LOG_INF("Shutting down STeval");
-	}
-	else
-	{
-		LOG_INF("Skip STeval shutdown");
+		k_sleep(K_SECONDS(1));
+		if (!i && current_conn == NULL)
+		{
+			dk_set_led_off(POWER_STEVAL);
+			LOG_INF("Shutting down STeval");
+		}
+		else if (current_conn != NULL)
+		{
+			LOG_INF("Skip STeval shutdown");
+			break;
+		}
 	}
 }
 
@@ -825,7 +873,13 @@ int main(void)
 	err = create_advertising_coded();
 	if (err)
 	{
-		LOG_ERR("Advertising failed to start (err %d)", err);
+		LOG_ERR("Advertising coded failed to start (err %d)", err);
+		return 0;
+	}
+	err = create_advertising_standard();
+	if (err)
+	{
+		LOG_ERR("Advertising 1M/2M failed to start (err %d)", err);
 		return 0;
 	}
 
