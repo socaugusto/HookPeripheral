@@ -453,10 +453,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	k_sem_give(&rssi_sem);
 
-	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
-	{
-		dk_set_led(SAFETY_LINE, 0);
-	}
+	dk_set_led(SAFETY_LINE, 0);
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -479,10 +476,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		current_conn = NULL;
 	}
 
-	if (memcmp(bt_conn_get_dst(conn)->a.val, remoteAddress, sizeof(remoteAddress)) == 0)
-	{
-		dk_set_led(SAFETY_LINE, 1);
-	}
+	dk_set_led(SAFETY_LINE, 1);
 
 	k_work_submit(&start_advertising_worker);
 	k_work_submit(&shutdown_steval_worker);
